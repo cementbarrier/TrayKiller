@@ -1,0 +1,25 @@
+# Build outputs
+bin/
+obj/
+publish/
+
+# NuGet
+*.nupkg
+*.snupkg
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.DotSettings
+*.DotSettings.user
+
+# Test
+TestResults/
+*.coverage
+
+# OS
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
