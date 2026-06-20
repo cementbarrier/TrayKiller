@@ -126,13 +126,19 @@ public partial class SettingsForm : Form
         _cmbDockSide = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
-            Items = { "右侧", "左侧" },
-            SelectedIndex = 1,
+            Items = { "右侧", "左侧", "顶部" },
+            SelectedIndex = 0,
             Width = 120,
         };
         _cmbDockSide.SelectedIndexChanged += (s, e) =>
         {
-            _settings.Data.DockSide = _cmbDockSide.SelectedIndex == 1 ? "Left" : "Right";
+            _settings.Data.DockSide = _cmbDockSide.SelectedIndex switch
+            {
+                0 => "Right",
+                1 => "Left",
+                2 => "Top",
+                _ => "Right",
+            };
             _settings.Save();
         };
         mainPanel.Controls.Add(_cmbDockSide, 1, row++);
@@ -285,7 +291,12 @@ public partial class SettingsForm : Form
         _chkAutoStart!.Checked = _settings.Data.AutoStart;
         _chkAutoHide!.Checked = _settings.Data.AutoHide;
         _chkForceKill!.Checked = _settings.Data.ForceKillAfterTimeout;
-        _cmbDockSide!.SelectedIndex = _settings.Data.DockSide == "Left" ? 1 : 0;
+        _cmbDockSide!.SelectedIndex = _settings.Data.DockSide switch
+        {
+            "Left" => 1,
+            "Top" => 2,
+            _ => 0, // "Right"
+        };
 
         var seconds = _settings.Data.AutoRefreshIntervalSeconds;
         int[] values = { 0, 10, 30, 60, 300 };

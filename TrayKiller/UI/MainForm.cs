@@ -19,8 +19,10 @@ public partial class MainForm : Form
     private System.Windows.Forms.Timer? _hideTimer;
     private System.Windows.Forms.Timer? _refreshTimer;
     private bool _isHidden = false;
-    private int _hiddenOffset = 0;
     private bool _isDraggingOut = false;
+
+    // 标题栏控件
+    private Button? _refreshBtn;
 
     // 拖拽源
     private Point _dragStartPoint;
@@ -72,7 +74,7 @@ public partial class MainForm : Form
             AutoSize = true,
             Location = new Point(6, 7),
         };
-        var refreshBtn = new Button
+        _refreshBtn = new Button
         {
             Text = "↻ 刷新",
             FlatStyle = FlatStyle.Flat,
@@ -84,9 +86,9 @@ public partial class MainForm : Form
             Location = new Point(200, 4),
             Cursor = Cursors.Hand,
         };
-        refreshBtn.Click += (s, e) => RefreshList();
+        _refreshBtn.Click += (s, e) => RefreshList();
         titleBar.Controls.Add(titleLabel);
-        titleBar.Controls.Add(refreshBtn);
+        titleBar.Controls.Add(_refreshBtn);
 
         // -- 进程列表 --
         var listBox = new ListBox
@@ -201,31 +203,52 @@ public partial class MainForm : Form
         var screen = Screen.FromPoint(Cursor.Position);
         var wa = screen.WorkingArea;
 
-        _hiddenOffset = this.Width - 6;
+        int x = 0, y = 0;
+        bool useSaved = false;
 
-        int x, y;
+        // 使用已保存的位置当且仅当：(1)坐标为有效屏幕坐标，(2)窗口在某一屏幕边缘（确保启动即是吸附状态）
         if (_settings.Data.PanelX >= 0 && _settings.Data.PanelY >= 0 &&
             Screen.AllScreens.Any(s => s.WorkingArea.Contains(_settings.Data.PanelX, _settings.Data.PanelY)))
         {
-            // 使用保存的位置，必须在某个屏幕工作区内
-            x = _settings.Data.PanelX;
-            y = _settings.Data.PanelY;
-        }
-        else
-        {
-            y = wa.Top + (wa.Height - this.Height) / 2;
-            if (_settings.Data.DockSide == "Left")
+            // 先把窗口放到保存位置，再检测是否贴边
+            this.Location = new Point(_settings.Data.PanelX, _settings.Data.PanelY);
+            if (DetectDockedEdge() != null)
             {
-                x = wa.Left;
+                x = _settings.Data.PanelX;
+                y = _settings.Data.PanelY;
+                useSaved = true;
             }
-            else
+        }
+
+        if (!useSaved)
+        {
+            switch (_settings.Data.DockSide)
             {
-                x = wa.Right - this.Width;
+                case "Left":
+                    x = wa.Left;
+                    y = wa.Top + (wa.Height - this.Height) / 2;
+                    break;
+                case "Right":
+                    x = wa.Right - this.Width;
+                    y = wa.Top + (wa.Height - this.Height) / 2;
+                    break;
+                case "Top":
+                    x = wa.Left + (wa.Width - this.Width) / 2;
+                    y = wa.Top;
+                    break;
+                case "Bottom":
+                    x = wa.Left + (wa.Width - this.Width) / 2;
+                    y = wa.Bottom - this.Height;
+                    break;
+                default:
+                    x = wa.Right - this.Width;
+                    y = wa.Top + (wa.Height - this.Height) / 2;
+                    break;
             }
         }
 
         this.Location = new Point(x, y);
-        _isHidden = false; // 确保初始显示时不在隐藏状态
+        _isHidden = false;
     }
 
     private void ShowPanel()
@@ -234,45 +257,103 @@ public partial class MainForm : Form
         _isHidden = false;
         this.Opacity = 1.0;
 
-        var p = this.Location;
-        if (_settings.Data.DockSide == "Left")
-        {
-            // 左侧停靠：向右移回
-            p.X += _hiddenOffset;
-        }
-        else
-        {
-            // 右侧停靠：向左移回
-            p.X -= _hiddenOffset;
-        }
-        this.Location = p;
+        // 分设 Left/Top 比直接设 Location 更可靠（某些 WinForms 版本 Location setter 不立即生效）
+        this.Left = _origX;
+        this.Top = _origY;
+        this.BringToFront();
 
-        // 从隐藏变为可见 → 立刻刷新一次
         RefreshList();
         StartRefreshTimer();
     }
+
+    /// <summary>隐藏前的原始坐标，用于精确恢复</summary>
+    private int _origX;
+    private int _origY;
 
     private void HidePanel()
     {
         if (_isHidden) return;
         _isHidden = true;
-        this.Opacity = 0.7;
 
-        var p = this.Location;
-        if (_settings.Data.DockSide == "Left")
+        var edge = DetectDockedEdge();
+        if (edge == null)
         {
-            // 左侧停靠：向左移出屏幕
-            p.X -= _hiddenOffset;
+            // 未贴边：仅降透明度，保持原位
+            _origX = this.Left;
+            _origY = this.Top;
+            this.Opacity = 0.7;
+            StopRefreshTimer();
+            return;
+        }
+
+        // 先把窗口吸附到屏幕边缘（消除用户拖拽可能带来的越界偏移），再记录原始坐标
+        SnapToEdge(edge);
+        _origX = this.Left;
+        _origY = this.Top;
+
+        if (edge == "Bottom")
+        {
+            // 底部不下移，避免与任务栏重叠导致虚化。仅降透明度。
+            this.Opacity = 0.3;
         }
         else
         {
-            // 右侧停靠：向右移出屏幕
-            p.X += _hiddenOffset;
+            this.Opacity = 0.7;
+            (int dx, int dy) = GetHideDisplacement(edge);
+            this.Left = _origX + dx;
+            this.Top = _origY + dy;
         }
-        this.Location = p;
 
         StopRefreshTimer();
     }
+
+    /// <summary>将窗口吸附到指定的屏幕工作区边缘</summary>
+    private void SnapToEdge(string edge)
+    {
+        var screen = Screen.FromPoint(this.Location);
+        var wa = screen.WorkingArea;
+        switch (edge)
+        {
+            case "Left":   this.Left = wa.Left; break;
+            case "Right":  this.Left = wa.Right - this.Width; break;
+            case "Top":    this.Top = wa.Top; break;
+            case "Bottom": this.Top = wa.Bottom - this.Height; break;
+        }
+    }
+
+    /// <summary>检测窗口当前实际贴在哪条边，不贴边返回 null</summary>
+    private string? DetectDockedEdge()
+    {
+        var screen = Screen.FromPoint(this.Location);
+        var wa = screen.WorkingArea;
+        const int tolerance = 20;
+
+        if (this.Left <= wa.Left + tolerance) return "Left";
+        if (this.Right >= wa.Right - tolerance) return "Right";
+        if (this.Top <= wa.Top + tolerance) return "Top";
+        // 底部贴边已禁用
+        return null;
+    }
+
+    /// <summary>计算贴边隐藏时的位移量。底部使用更大的可见条（30px），避免被任务栏遮挡导致无法触发弹出。</summary>
+    private (int dx, int dy) GetHideDisplacement(string edge)
+    {
+        var screen = Screen.FromPoint(this.Location);
+        var wa = screen.WorkingArea;
+        const int sliver = 6;
+        const int bottomSliver = 30;
+
+        return edge switch
+        {
+            "Left"   => (-(this.Right - wa.Left - sliver), 0),
+            "Right"  => (wa.Right - this.Left - sliver, 0),
+            "Top"    => (0, -(this.Bottom - wa.Top - sliver)),
+            "Bottom" => (0, wa.Bottom - this.Top - bottomSliver),
+            _ => (0, 0),
+        };
+    }
+
+    private bool IsAtDockEdge() => DetectDockedEdge() != null;
 
     private void SetupRefreshTimer()
     {
@@ -299,6 +380,29 @@ public partial class MainForm : Form
         this.Show();
         ShowPanel();
         this.BringToFront();
+    }
+
+    /// <summary>
+    /// 切换 DockSide 后重新定位到对应边缘
+    /// </summary>
+    public void RepositionToEdge()
+    {
+        _settings.Data.PanelX = -1;
+        _settings.Data.PanelY = -1;
+        _settings.Save();
+        _isHidden = false;
+        this.Opacity = 1.0;
+        PositionWindow();
+        RefreshList();
+    }
+
+    /// <summary>
+    /// 退出前获取隐藏前的真实边缘坐标
+    /// </summary>
+    public Point GetRestoredPosition()
+    {
+        if (!_isHidden) return this.Location;
+        return new Point(_origX, _origY);
     }
 
     #endregion
@@ -546,6 +650,34 @@ public partial class MainForm : Form
             ShowAlways = true,
         };
         bubble.Show(message, this, this.Width / 2 - 60, this.Height - 80, 2500);
+    }
+
+    #endregion
+
+    #region 窗口拖动
+
+    private const int WM_NCHITTEST = 0x84;
+    private const int HTCLIENT = 1;
+    private const int HTCAPTION = 2;
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WM_NCHITTEST)
+        {
+            base.WndProc(ref m);
+            if ((int)m.Result == HTCLIENT)
+            {
+                var pt = PointToClient(new Point(m.LParam.ToInt32()));
+                if (pt.Y <= 32 && (_refreshBtn == null || !_refreshBtn.Bounds.Contains(pt)))
+                {
+                    // 虚化状态下拖动会导致窗口行为异常，先恢复
+                    if (_isHidden) ShowPanel();
+                    m.Result = (IntPtr)HTCAPTION;
+                }
+            }
+            return;
+        }
+        base.WndProc(ref m);
     }
 
     #endregion

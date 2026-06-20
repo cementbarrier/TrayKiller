@@ -78,8 +78,7 @@ public class AppContext : ApplicationContext
             _settingsForm.FormClosed += (s, e) =>
             {
                 _settingsForm = null;
-                // 设置变更后刷新主面板
-                _mainForm?.RefreshList();
+                _mainForm?.RepositionToEdge();
             };
         }
 
@@ -95,11 +94,12 @@ public class AppContext : ApplicationContext
         _mainForm?.Close();
         _settingsForm?.Close();
 
-        // 保存窗口位置
+        // 保存窗口位置（恢复隐藏位移后保存真实边缘坐标）
         if (_mainForm != null && !_mainForm.IsDisposed)
         {
-            _settings.Data.PanelX = _mainForm.Location.X;
-            _settings.Data.PanelY = _mainForm.Location.Y;
+            var pos = _mainForm.GetRestoredPosition();
+            _settings.Data.PanelX = pos.X;
+            _settings.Data.PanelY = pos.Y;
         }
         _settings.Save();
 
