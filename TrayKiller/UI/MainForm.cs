@@ -1,3 +1,4 @@
+using System.Linq;
 using TrayKiller.Models;
 using TrayKiller.Services;
 
@@ -203,9 +204,10 @@ public partial class MainForm : Form
         _hiddenOffset = this.Width - 6;
 
         int x, y;
-        if (_settings.Data.PanelX >= 0 && _settings.Data.PanelY >= 0)
+        if (_settings.Data.PanelX >= 0 && _settings.Data.PanelY >= 0 &&
+            Screen.AllScreens.Any(s => s.WorkingArea.Contains(_settings.Data.PanelX, _settings.Data.PanelY)))
         {
-            // 使用保存的位置，直接应用不做隐藏偏移
+            // 使用保存的位置，必须在某个屏幕工作区内
             x = _settings.Data.PanelX;
             y = _settings.Data.PanelY;
         }
